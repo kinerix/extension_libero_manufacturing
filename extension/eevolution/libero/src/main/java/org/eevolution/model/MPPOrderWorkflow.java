@@ -514,6 +514,19 @@ public class MPPOrderWorkflow extends X_PP_Order_Workflow
 	@Override
 	protected boolean afterSave (boolean newRecord, boolean success)
 	{
+		if (getProcessType() == null)
+			 throw new AdempiereException("@FillMandatory@ @ProcessType@");
+		
+		if(MPPOrderWorkflow.PROCESSTYPE_ContinuousFlow.equals(getProcessType()) ||
+		   MPPOrderWorkflow.PROCESSTYPE_DedicateRepetititiveFlow.equals(getProcessType()) ||
+		   MPPOrderWorkflow.PROCESSTYPE_MixedRepetitiveFlow.equals(getProcessType())
+		   )
+		{
+			if(getS_Resource_ID() <= 0)
+				throw new AdempiereException("@FillMandatory@ @S_Resource_ID@");
+		}
+
+		
 		log.fine("Success=" + success);
 		if (success && newRecord)
 		{

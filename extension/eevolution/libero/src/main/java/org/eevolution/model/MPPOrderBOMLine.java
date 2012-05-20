@@ -193,8 +193,13 @@ public class MPPOrderBOMLine extends X_PP_Order_BOMLine
 	protected boolean beforeDelete()
 	{
 		// Release Reservation
-		setQtyRequired(Env.ZERO);
-		reserveStock();
+		if(MPPOrder.DOCSTATUS_InProgress.equals(getParent().getDocStatus()) || 
+		   MPPOrder.DOCSTATUS_Completed.equals(getParent().getDocStatus()))
+		{	
+			setQtyRequired(Env.ZERO);
+			reserveStock();
+		}	
+		
 		return true;
 	}
 
@@ -564,7 +569,17 @@ public class MPPOrderBOMLine extends X_PP_Order_BOMLine
 			return;
 		}
 		BigDecimal reserved = difference;
-		int M_Locator_ID = getM_Locator_ID(reserved);
+		int M_Locator_ID;
+		
+		if(getParent().isRepetitiveProcess())
+		{
+			M_Locator_ID =  getParent().getFloorStockLocatoById();
+		}
+		else
+		{	
+			M_Locator_ID =  getM_Locator_ID(reserved);
+		}	
+		
 		//	Update Storage
 		if (!MStorage.add(getCtx(), getM_Warehouse_ID(), M_Locator_ID,
 				getM_Product_ID(), getM_AttributeSetInstance_ID(),

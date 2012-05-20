@@ -164,11 +164,7 @@ public class MPPOrder extends X_PP_Order implements DocAction
 					}
 				}
 				
-				MStorage[] storages = MPPOrder.getStorages(order.getCtx(),
-						M_Product_ID,
-						order.getM_Warehouse_ID(),
-						 M_AttributeSetInstance_ID,
-						minGuaranteeDate, order.get_TrxName());
+				MStorage[] storages = MPPOrder.getStorages(order, M_Product_ID, M_AttributeSetInstance_ID, minGuaranteeDate);
 				
 				if (M_AttributeSetInstance_ID == 0)
 				{					
@@ -207,6 +203,17 @@ public class MPPOrder extends X_PP_Order implements DocAction
 		return isCompleteQtyDeliver;
 	}
 	
+	/**
+	 * Search Storages by 
+	 * @deprecated
+	 * @param ctx
+	 * @param M_Product_ID
+	 * @param M_Warehouse_ID
+	 * @param M_ASI_ID
+	 * @param minGuaranteeDate
+	 * @param trxName
+	 * @return
+	 */
 	public static MStorage[] getStorages(
 			Properties ctx,
 			int M_Product_ID,
@@ -214,6 +221,29 @@ public class MPPOrder extends X_PP_Order implements DocAction
 			int M_ASI_ID,
 			Timestamp minGuaranteeDate, String trxName)
 	{
+		return getStorages(ctx, M_Product_ID, M_Warehouse_ID, 0 , M_ASI_ID, minGuaranteeDate, trxName);
+	}
+	
+	/**
+	 * Search storages
+	 * @param ctx
+	 * @param M_Product_ID
+	 * @param M_Warehouse_ID
+	 * @param M_AttributeSetInstance_ID
+	 * @param minGuaranteeDate
+	 * @param trxName
+	 * @return
+	 */
+	public static MStorage[] getStorages(
+			Properties ctx,
+			int M_Product_ID,
+			int M_Warehouse_ID,
+			int M_Locator_ID,
+			int M_AttributeSetInstance_ID,
+			Timestamp minGuaranteeDate, String trxName)
+	{
+		
+	
 		MProduct product = MProduct.get(ctx, M_Product_ID);
 		if (product != null && product.isStocked())
 		{
@@ -224,11 +254,11 @@ public class MPPOrder extends X_PP_Order implements DocAction
 				return MStorage.getWarehouse(ctx,
 						M_Warehouse_ID,
 						M_Product_ID,
-						M_ASI_ID ,
+						M_AttributeSetInstance_ID ,
 						minGuaranteeDate,
 						MClient.MMPOLICY_FiFo.equals(MMPolicy), // FiFo
 						true, // positiveOnly
-						0, // M_Locator_ID
+						M_Locator_ID , // M_Locator_ID
 						trxName
 				);
 			}
@@ -243,7 +273,7 @@ public class MPPOrder extends X_PP_Order implements DocAction
 						minGuaranteeDate,
 						MClient.MMPOLICY_FiFo.equals(MMPolicy), // FiFo
 						true, // positiveOnly
-						0, // M_Locator_ID
+						M_Locator_ID, // M_Locator_ID
 						trxName
 				);
 			}
@@ -253,6 +283,35 @@ public class MPPOrder extends X_PP_Order implements DocAction
 		{
 			return new MStorage[0];
 		}
+	}
+
+	/**
+	 * Search storages based on Manufacturing process
+	 * @param order
+	 * @param M_Product_ID
+	 * @param M_ASI_ID
+	 * @param minGuaranteeDate
+	 * @return
+	 */
+	public static MStorage[] getStorages(MPPOrder order,
+			int M_Product_ID,
+			int M_AttributeSetInstance_ID,
+			Timestamp minGuaranteeDate)
+	{
+		int M_Locator_ID = 0;
+		//For Repetitive process using floor stock Locator
+		if (order.isRepetitiveProcess())
+		{
+			M_Locator_ID = order.getFloorStockLocatoById();
+		}
+		return getStorages(
+				order.getCtx(), 
+				M_Product_ID, 
+				order.getM_Warehouse_ID(), 
+				M_Locator_ID , 
+				M_AttributeSetInstance_ID, 
+				minGuaranteeDate, 
+				order.get_TrxName());
 	}
 
 
@@ -492,8 +551,12 @@ public class MPPOrder extends X_PP_Order implements DocAction
 		}
 		
 		// Un-Order Stock
-		setQtyOrdered(Env.ZERO);
-		orderStock();
+		if(MPPOrder.DOCSTATUS_InProgress.equals(getDocStatus()) || 
+				   MPPOrder.DOCSTATUS_Completed.equals(getDocStatus()))
+		{	
+			setQtyOrdered(Env.ZERO);
+			orderStock();
+		}	
 
 		return true;
 	} //	beforeDelete
@@ -510,15 +573,15 @@ public class MPPOrder extends X_PP_Order implements DocAction
 		Object[] params = new Object[]{get_ID(), getAD_Client_ID()};
 		// Reset workflow start node
 		DB.executeUpdateEx("UPDATE PP_Order_Workflow SET PP_Order_Node_ID=NULL WHERE "+whereClause, params, get_TrxName());
+		// Delete BOM:
+		deletePO(MPPOrderBOMLine.Table_Name, whereClause, params);
+		deletePO(MPPOrderBOM.Table_Name, whereClause, params);
 		// Delete workflow:
 		deletePO(X_PP_Order_Node_Asset.Table_Name, whereClause, params);
 		deletePO(X_PP_Order_Node_Product.Table_Name, whereClause, params);
 		deletePO(MPPOrderNodeNext.Table_Name, whereClause, params);
 		deletePO(MPPOrderNode.Table_Name, whereClause, params);
 		deletePO(MPPOrderWorkflow.Table_Name, whereClause, params);
-		// Delete BOM:
-		deletePO(MPPOrderBOMLine.Table_Name, whereClause, params);
-		deletePO(MPPOrderBOM.Table_Name, whereClause, params);
 		
 	}
 
@@ -1059,50 +1122,6 @@ public class MPPOrder extends X_PP_Order implements DocAction
 	 */
 	private void explotion()
 	{
-		// Create BOM Head
-		final MPPProductBOM PP_Product_BOM = MPPProductBOM.get(getCtx(), getPP_Product_BOM_ID());
-		// Product from Order should be same as product from BOM - teo_sarca [ 2817870 ] 
-		if (getM_Product_ID() != PP_Product_BOM.getM_Product_ID())
-		{
-			throw new AdempiereException("@NotMatch@ @PP_Product_BOM_ID@ , @M_Product_ID@");
-		}
-		// Product BOM Configuration should be verified - teo_sarca [ 2817870 ]
-		final MProduct product = MProduct.get(getCtx(), PP_Product_BOM.getM_Product_ID());
-		if (!product.isVerified())
-		{
-			throw new AdempiereException("Product BOM Configuration not verified. Please verify the product first - "+product.getValue()); // TODO: translate
-		}
-		if (PP_Product_BOM.isValidFromTo(getDateStartSchedule()))
-		{
-			MPPOrderBOM PP_Order_BOM = new MPPOrderBOM(PP_Product_BOM, getPP_Order_ID(), get_TrxName());
-			PP_Order_BOM.setAD_Org_ID(getAD_Org_ID());
-			PP_Order_BOM.saveEx();
-
-			for (MPPProductBOMLine PP_Product_BOMline : PP_Product_BOM.getLines(true))
-			{
-				if (PP_Product_BOMline.isValidFromTo(getDateStartSchedule()))
-				{
-					MPPOrderBOMLine PP_Order_BOMLine = new MPPOrderBOMLine(PP_Product_BOMline,
-																getPP_Order_ID(), PP_Order_BOM.get_ID(),
-																getM_Warehouse_ID(),
-																get_TrxName());
-					PP_Order_BOMLine.setAD_Org_ID(getAD_Org_ID());
-					PP_Order_BOMLine.setM_Warehouse_ID(getM_Warehouse_ID());
-					PP_Order_BOMLine.setM_Locator_ID(getM_Locator_ID());
-					PP_Order_BOMLine.setQtyOrdered(getQtyOrdered());
-					PP_Order_BOMLine.saveEx();
-				} // end if valid From / To    
-				else
-				{
-					log.fine("BOM Line skiped - "+PP_Product_BOMline);
-				}
-			} // end Create Order BOM
-		} // end if From / To parent
-		else
-		{
-			throw new BOMExpiredException(PP_Product_BOM, getDateStartSchedule());
-		}
-
 		// Create Workflow (Routing & Process)
 		final MWorkflow AD_Workflow = MWorkflow.get(getCtx(), getAD_Workflow_ID());
 		// Workflow should be validated first - teo_sarca [ 2817870 ]
@@ -1165,11 +1184,58 @@ public class MPPOrder extends X_PP_Order implements DocAction
 				}
 			}
 			PP_Order_Workflow.saveEx();
+			
+			
 		} // workflow valid from/to
 		else
 		{
 			throw new RoutingExpiredException(AD_Workflow, getDateStartSchedule());
 		}
+		
+		// Create BOM Head
+		final MPPProductBOM PP_Product_BOM = MPPProductBOM.get(getCtx(), getPP_Product_BOM_ID());
+		// Product from Order should be same as product from BOM - teo_sarca [ 2817870 ] 
+		if (getM_Product_ID() != PP_Product_BOM.getM_Product_ID())
+		{
+			throw new AdempiereException("@NotMatch@ @PP_Product_BOM_ID@ , @M_Product_ID@");
+		}
+		// Product BOM Configuration should be verified - teo_sarca [ 2817870 ]
+		final MProduct product = MProduct.get(getCtx(), PP_Product_BOM.getM_Product_ID());
+		if (!product.isVerified())
+		{
+			throw new AdempiereException("Product BOM Configuration not verified. Please verify the product first - "+product.getValue()); // TODO: translate
+		}
+		if (PP_Product_BOM.isValidFromTo(getDateStartSchedule()))
+		{
+			MPPOrderBOM PP_Order_BOM = new MPPOrderBOM(PP_Product_BOM, getPP_Order_ID(), get_TrxName());
+			PP_Order_BOM.setAD_Org_ID(getAD_Org_ID());
+			PP_Order_BOM.saveEx();
+
+			for (MPPProductBOMLine PP_Product_BOMline : PP_Product_BOM.getLines(true))
+			{
+				if (PP_Product_BOMline.isValidFromTo(getDateStartSchedule()))
+				{
+					MPPOrderBOMLine PP_Order_BOMLine = new MPPOrderBOMLine(PP_Product_BOMline,
+																getPP_Order_ID(), PP_Order_BOM.get_ID(),
+																getM_Warehouse_ID(),
+																get_TrxName());
+					PP_Order_BOMLine.setAD_Org_ID(getAD_Org_ID());
+					PP_Order_BOMLine.setM_Warehouse_ID(getM_Warehouse_ID());
+					PP_Order_BOMLine.setM_Locator_ID(getM_Locator_ID());
+					PP_Order_BOMLine.setQtyOrdered(getQtyOrdered());
+					PP_Order_BOMLine.saveEx();
+				} // end if valid From / To    
+				else
+				{
+					log.fine("BOM Line skiped - "+PP_Product_BOMline);
+				}
+			} // end Create Order BOM
+		} // end if From / To parent
+		else
+		{
+			throw new BOMExpiredException(PP_Product_BOM, getDateStartSchedule());
+		}		
+		
 	}
 	
 	/**
@@ -1343,6 +1409,9 @@ public class MPPOrder extends X_PP_Order implements DocAction
 	 */
 	public int getM_Locator_ID()
 	{
+		if(isRepetitiveProcess())
+			return getFloorStockLocatoById();
+			
 		MWarehouse wh = MWarehouse.get(getCtx(), getM_Warehouse_ID());
 		return wh.getDefaultLocator().getM_Locator_ID();
 	}
@@ -1822,11 +1891,7 @@ public class MPPOrder extends X_PP_Order implements DocAction
 					M_AttributeSetInstance_ID = orderBOMLine.getM_AttributeSetInstance_ID();
 				}
 				
-				MStorage[] storages = MPPOrder.getStorages(getCtx(),
-						M_Product_ID,
-						getM_Warehouse_ID(),
-						M_AttributeSetInstance_ID
-						, today, get_TrxName());
+				MStorage[] storages = MPPOrder.getStorages(this, M_Product_ID, M_AttributeSetInstance_ID, today);
 				
 				MPPOrder.createIssue(
 						this, 
@@ -1849,4 +1914,50 @@ public class MPPOrder extends X_PP_Order implements DocAction
 			//return DOCSTATUS_Closed;
 		}
 	}
+	
+	/**
+	 * get the Locator Floor Stock for repetitive process
+	 * @param value
+	 * @return
+	 */
+	 public int getFloorStockLocatoById()
+	{
+		String locatorValue = getMPPOrderWorkflow().getS_Resource().getValue();
+		String whereClause = MLocator.COLUMNNAME_M_Warehouse_ID +  "=? AND "
+						   + MLocator.COLUMNNAME_Value + "=?";
+		int locator_id =new Query (Env.getCtx(), MLocator.Table_Name , whereClause , null)
+		.setClient_ID()
+		.setParameters(this.getM_Warehouse_ID(), locatorValue)
+		.firstId();
+		
+		if(locator_id <= 0)
+		{	//TODO: create message into Application Dictionary
+			throw new AdempiereException("@AD_Workflow_ID@ need a search key for locator with same resource  search key for " + locatorValue);
+		}		
+		return locator_id;
+	}
+	 
+	/**
+	 * Is repetitive process for production line 
+	 * @return
+	 */
+	public boolean isRepetitiveProcess()
+	{
+		if(MWorkflow.PROCESSTYPE_DedicateRepetititiveFlow.equals(getProcessType()) ||  
+				   MWorkflow.PROCESSTYPE_MixedRepetitiveFlow.equals(getProcessType()) ||
+				   MWorkflow.PROCESSTYPE_ContinuousFlow.equals(getProcessType()))
+		{	
+			return true;
+		}	
+
+			return false;
+	}
+	
+	public String getProcessType()
+	{
+		return  getMPPOrderWorkflow().getProcessType();
+		
+	}
+	
+	
 } // MPPOrder

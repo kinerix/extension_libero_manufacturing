@@ -43,12 +43,14 @@ import org.compiere.process.DocAction;
 import org.compiere.util.CLogger;
 import org.compiere.util.Env;
 import org.compiere.util.Msg;
+import org.compiere.wf.MWorkflow;
 
 
 /**
  * Libero Validator 
  *	
  * @author Victor Perez
+ * <li>Repetitive Manufacturing http://adempiere.atlassian.net/browse/MFG-14
  * @author Trifon Trifonov
  *		<li>[ 2270421 ] Can not complete Shipment (Customer)</li>
  * @author Teo Sarca, www.arhipac.ro
@@ -71,6 +73,7 @@ public class LiberoValidator implements ModelValidator
 			m_AD_Client_ID = client.getAD_Client_ID();
 		}
 		engine.addModelChange(MProduct.Table_Name, this);
+		engine.addModelChange(MWorkflow.Table_Name, this);
 		//	MRP Sources
 		for (String mrpTableName : MPPMRP.getSourceTableNames())
 		{
@@ -207,6 +210,26 @@ public class LiberoValidator implements ModelValidator
 		{
 			MPPOrderBOMLine obl = (MPPOrderBOMLine)po;
 			MPPMRP.PP_Order_BOMLine(obl);
+		}
+		
+		//Validate Manufacturing WorkFlow
+		if (po instanceof MWorkflow)
+		{
+			MWorkflow workflow = (MWorkflow) po;
+			if(MWorkflow.WORKFLOWTYPE_Manufacturing.equals(workflow.getWorkflowType()))
+			{
+				if (workflow.getProcessType() == null)
+					 throw new AdempiereException("@FillMandatory@ @ProcessType@");
+				
+				if(MWorkflow.PROCESSTYPE_ContinuousFlow.equals(workflow.getProcessType()) ||
+				   MWorkflow.PROCESSTYPE_DedicateRepetititiveFlow.equals(workflow.getProcessType()) ||
+				   MWorkflow.PROCESSTYPE_MixedRepetitiveFlow.equals(workflow.getProcessType())
+				   )
+				{
+					if(workflow.getS_Resource_ID() <= 0)
+						throw new AdempiereException("@FillMandatory@ @S_Resource_ID@");
+				}
+			}
 		}
 		//
 		return null;

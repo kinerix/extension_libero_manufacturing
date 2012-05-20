@@ -24,6 +24,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
+import java.util.List;
 
 import org.adempiere.exceptions.DBException;
 import org.compiere.apps.form.GenForm;
@@ -44,6 +45,7 @@ import org.eevolution.model.MPPProductBOMLine;
 /**
  * 
  * @author victor.perez@e-evolution.com http://www.e-evolution.com
+ * <li>Repetitive Manufacturing http://adempiere.atlassian.net/browse/MFG-14
  */
 
 public class OrderReceiptIssue extends GenForm {
@@ -83,6 +85,8 @@ public class OrderReceiptIssue extends GenForm {
 	private int m_PP_Order_ID = 0;
 
 	private MPPOrder m_PP_order = null;
+	
+	private String m_ProcessType = null;
 
 	public void configureMiniTable(IMiniTable issue) {
 		issue.addColumn(MPPOrderBOMLine.COLUMNNAME_PP_Order_BOMLine_ID); // 0
@@ -133,7 +137,7 @@ public class OrderReceiptIssue extends GenForm {
 				Msg.translate(Env.getCtx(), "QtyReserved"));
 		issue.setColumnClass(12, BigDecimal.class, true,
 				Msg.translate(Env.getCtx(), "QtyAvailable"));
-		issue.setColumnClass(13, String.class, true,
+		issue.setColumnClass(13, KeyNamePair.class, true,
 				Msg.translate(Env.getCtx(), "M_Locator_ID"));
 		issue.setColumnClass(14, KeyNamePair.class, true,
 				Msg.translate(Env.getCtx(), "M_Warehouse_ID"));
@@ -151,31 +155,7 @@ public class OrderReceiptIssue extends GenForm {
 		// issue.setCellSelectionEnabled(true);
 		// issue.getSelectionModel().addListSelectionListener(this);
 		issue.setRowCount(0);
-
-		m_sql = "SELECT "
-				+ "obl.PP_Order_BOMLine_ID," // 1
-				+ "obl.IsCritical," // 2
-				+ "p.Value," // 3
-				+ "obl.M_Product_ID,p.Name," // 4,5
-				+ "p.C_UOM_ID,u.Name," // 6,7
-				+ "obl.QtyRequired," // 8
-				+ "obl.QtyReserved," // 9
-				+ "bomQtyAvailable(obl.M_Product_ID,obl.M_Warehouse_ID,0 ) AS QtyAvailable," // 10
-				+ "bomQtyOnHand(obl.M_Product_ID,obl.M_Warehouse_ID,0) AS QtyOnHand," // 11
-				+ "p.M_Locator_ID," // 12
-				+ "obl.M_Warehouse_ID,w.Name," // 13,14
-				+ "obl.QtyBom," // 15
-				+ "obl.isQtyPercentage," // 16
-				+ "obl.QtyBatch," // 17
-				+ "obl.ComponentType," // 18
-				+ "obl.QtyRequired - QtyDelivered AS QtyOpen," // 19
-				+ "obl.QtyDelivered" // 20
-				+ " FROM PP_Order_BOMLine obl"
-				+ " INNER JOIN M_Product p ON (obl.M_Product_ID = p.M_Product_ID) "
-				+ " INNER JOIN C_UOM u ON (p.C_UOM_ID = u.C_UOM_ID) "
-				+ " INNER JOIN M_Warehouse w ON (w.M_Warehouse_ID = obl.M_Warehouse_ID) "
-				+ " WHERE obl.PP_Order_ID = ?" + " ORDER BY obl."
-				+ MPPOrderBOMLine.COLUMNNAME_Line;
+		
 	} // dynInit
 
 	private String createHTMLTable(String[][] table) {
@@ -295,12 +275,9 @@ public class OrderReceiptIssue extends GenForm {
 								.getM_AttributeSetInstance_ID();
 					}
 				}
-
-				MStorage[] storages = MPPOrder.getStorages(Env.getCtx(),
-						M_Product_ID, order.getM_Warehouse_ID(),
-						M_AttributeSetInstance_ID, minGuaranteeDate,
-						order.get_TrxName());
-
+				
+				MStorage[] storages =  MPPOrder.getStorages(order, M_Product_ID, M_AttributeSetInstance_ID, minGuaranteeDate);
+				
 				MPPOrder.createIssue(order, PP_Order_BOMLine_ID, movementDate,
 						qtyToDeliver, qtyScrapComponent, Env.ZERO, storages,
 						false);
@@ -312,30 +289,56 @@ public class OrderReceiptIssue extends GenForm {
 	 * Query Info
 	 */
 	public void executeQuery(IMiniTable issue) {
-		final String sql = "SELECT "
-				+ "obl.PP_Order_BOMLine_ID," // 1
-				+ "obl.IsCritical," // 2
-				+ "p.Value," // 3
-				+ "obl.M_Product_ID,p.Name," // 4,5
-				+ "p.C_UOM_ID,u.Name," // 6,7
-				+ "obl.QtyRequired," // 8
-				+ "obl.QtyReserved," // 9
-				+ "bomQtyAvailable(obl.M_Product_ID,obl.M_Warehouse_ID,0 ) AS QtyAvailable," // 10
-				+ "bomQtyOnHand(obl.M_Product_ID,obl.M_Warehouse_ID,0) AS QtyOnHand," // 11
-				+ "p.M_Locator_ID," // 12
-				+ "obl.M_Warehouse_ID,w.Name," // 13,14
-				+ "obl.QtyBom," // 15
-				+ "obl.isQtyPercentage," // 16
-				+ "obl.QtyBatch," // 17
-				+ "obl.ComponentType," // 18
-				+ "obl.QtyRequired - QtyDelivered AS QtyOpen," // 19
-				+ "obl.QtyDelivered" // 20
-				+ " FROM PP_Order_BOMLine obl"
-				+ " INNER JOIN M_Product p ON (obl.M_Product_ID = p.M_Product_ID) "
-				+ " INNER JOIN C_UOM u ON (p.C_UOM_ID = u.C_UOM_ID) "
-				+ " INNER JOIN M_Warehouse w ON (w.M_Warehouse_ID = obl.M_Warehouse_ID) "
-				+ " WHERE obl.PP_Order_ID = ?" + " ORDER BY obl."
-				+ MPPOrderBOMLine.COLUMNNAME_Line;
+		
+		List<Object> parameters = new ArrayList<Object>();
+		
+		
+
+		
+		StringBuffer sql = new StringBuffer("SELECT ");
+		sql
+		.append("obl.PP_Order_BOMLine_ID,")  // 1
+		.append("obl.IsCritical,")  // 2
+		.append("p.Value,") // 3
+		.append("obl.M_Product_ID,p.Name,") // 4,5
+		.append("p.C_UOM_ID,u.Name,") // 6,7
+		.append("obl.QtyRequired,") // 8
+		.append("obl.QtyReserved,"); // 9;
+		
+		if(getPP_Order().isRepetitiveProcess())
+		{
+			sql
+			.append("(SELECT NVL(SUM(QtyOnHand) - SUM(QtyReserved),0) FROM M_Storage WHERE M_Locator_ID = ? ) AS QtyAvailable,") // 10
+			.append("(SELECT NVL(SUM(QtyOnHand),0) FROM M_Storage WHERE M_Locator_ID = ?) AS QtyOnHand,"); // 11
+			parameters.add(getPP_Order().getFloorStockLocatoById());
+			parameters.add(getPP_Order().getFloorStockLocatoById());
+		}
+		else
+		{
+			sql
+			.append("bomQtyAvailable(obl.M_Product_ID,obl.M_Warehouse_ID, 0 ) AS QtyAvailable,") // 10
+			.append("bomQtyOnHand(obl.M_Product_ID,obl.M_Warehouse_ID, 0 ) AS QtyOnHand,"); // 11
+		}
+		
+		sql
+		.append("obl.M_Locator_ID, l.value,") // 12 , 13
+		.append("obl.M_Warehouse_ID,w.Name,") // 14, 15
+		.append("obl.QtyBom,") // 16
+		.append("obl.isQtyPercentage,") // 17
+		.append("obl.QtyBatch,") // 18
+		.append("obl.ComponentType,") // 19
+		.append("obl.QtyRequired - obl.QtyDelivered AS QtyOpen,") // 20
+		.append("obl.QtyDelivered") // 21
+		.append(" FROM PP_Order_BOMLine obl")
+		.append(" INNER JOIN M_Product p ON (obl.M_Product_ID = p.M_Product_ID) ")
+		.append(" INNER JOIN C_UOM u ON (p.C_UOM_ID = u.C_UOM_ID) ")
+		.append(" INNER JOIN M_Warehouse w ON (w.M_Warehouse_ID = obl.M_Warehouse_ID) ")
+		.append(" INNER JOIN M_Locator l ON ( l.M_Locator_ID = obl.M_Locator_ID ) ")
+		.append(" WHERE obl.PP_Order_ID = ?")
+		.append(" ORDER BY obl."+ MPPOrderBOMLine.COLUMNNAME_Line);
+		
+		parameters.add(getPP_Order_ID());
+		
 		// reset table
 		int row = 0;
 		issue.setRowCount(row);
@@ -343,8 +346,8 @@ public class OrderReceiptIssue extends GenForm {
 		PreparedStatement pstmt = null;
 		ResultSet rs = null;
 		try {
-			pstmt = DB.prepareStatement(sql, null);
-			pstmt.setInt(1, getPP_Order_ID());
+			pstmt = DB.prepareStatement(sql.toString(), null);
+			DB.setParameters(pstmt, parameters);
 			rs = pstmt.executeQuery();
 			while (rs.next()) {
 				// extend table
@@ -352,15 +355,15 @@ public class OrderReceiptIssue extends GenForm {
 				// set values
 				// issue.
 				IDColumn id = new IDColumn(rs.getInt(1));
-				BigDecimal qtyBom = rs.getBigDecimal(15);
-				Boolean isQtyPercentage = rs.getString(16).equals("Y");
+				BigDecimal qtyBom = rs.getBigDecimal(16); // 16
+				Boolean isQtyPercentage = rs.getString(17).equals("Y"); // 17
 				Boolean isCritical = rs.getString(2).equals("Y");
-				BigDecimal qtyBatch = rs.getBigDecimal(17);
+				BigDecimal qtyBatch = rs.getBigDecimal(18); // 18
 				BigDecimal qtyRequired = rs.getBigDecimal(8);
 				BigDecimal qtyOnHand = rs.getBigDecimal(11);
-				BigDecimal qtyOpen = rs.getBigDecimal(19);
-				BigDecimal qtyDelivered = rs.getBigDecimal(20);
-				String componentType = rs.getString(18);
+				BigDecimal qtyOpen = rs.getBigDecimal(20);
+				BigDecimal qtyDelivered = rs.getBigDecimal(21);
+				String componentType = rs.getString(19);
 				BigDecimal toDeliverQty = getToDeliverQty();
 				BigDecimal openQty = getOpenQty();
 				BigDecimal scrapQty = getScrapQty();
@@ -389,12 +392,15 @@ public class OrderReceiptIssue extends GenForm {
 				issue.setValueAt(rs.getBigDecimal(10), row, 12); // QtyAvailable
 				// ... 13 - M_Locator_ID
 				issue.setValueAt(
-						new KeyNamePair(rs.getInt(13), rs.getString(14)), row,
+						new KeyNamePair(rs.getInt(12), rs.getString(13)) ,row,
+						13);
+				issue.setValueAt(
+						new KeyNamePair(rs.getInt(14), rs.getString(15)), row,
 						14); // Warehouse
 				issue.setValueAt(qtyBom, row, 15); // QtyBom
 				issue.setValueAt(isQtyPercentage, row, 16); // isQtyPercentage
 				issue.setValueAt(qtyBatch, row, 17); // QtyBatch
-
+				
 				if (componentType
 						.equals(MPPProductBOMLine.COMPONENTTYPE_Component)
 						|| componentType
@@ -517,7 +523,7 @@ public class OrderReceiptIssue extends GenForm {
 				row++;
 
 				if (isOnlyIssue() || isBackflush()) {
-					int warehouse_id = rs.getInt(13);
+					int warehouse_id = rs.getInt(14);
 					int product_id = rs.getInt(4);
 					row += lotes(row, id, warehouse_id, product_id,
 							componentQtyReq, componentQtyToDel, issue);
@@ -589,10 +595,8 @@ public class OrderReceiptIssue extends GenForm {
 					{
 						Timestamp m_movementDate = getMovementDate();
 						Timestamp minGuaranteeDate = m_movementDate;
-						MStorage[] storages = MPPOrder.getStorages(
-								Env.getCtx(), m_M_Product_ID, getPP_Order()
-										.getM_Warehouse_ID(), 0,
-								minGuaranteeDate, null);
+						
+						MStorage[] storages = MPPOrder.getStorages(getPP_Order(), m_M_Product_ID, 0, minGuaranteeDate);
 
 						BigDecimal todelivery = getValueBigDecimal(issue, i, 8); // QtyOpen
 						BigDecimal scrap = getValueBigDecimal(issue, i, 9); // QtyScrap
@@ -756,25 +760,37 @@ public class OrderReceiptIssue extends GenForm {
 		int linesNo = 0;
 		BigDecimal qtyRequiredActual = qtyRequired;
 
-		final String sql = "SELECT "
-				+ "s.M_Product_ID , s.QtyOnHand, s.M_AttributeSetInstance_ID"
-				+ ", p.Name, masi.Description, l.Value, w.Value, w.M_warehouse_ID,p.Value"
-				+ "  FROM M_Storage s "
-				+ " INNER JOIN M_Product p ON (s.M_Product_ID = p.M_Product_ID) "
-				+ " INNER JOIN C_UOM u ON (u.C_UOM_ID = p.C_UOM_ID) "
-				+ " INNER JOIN M_AttributeSetInstance masi ON (masi.M_AttributeSetInstance_ID = s.M_AttributeSetInstance_ID) "
-				+ " INNER JOIN M_Warehouse w ON (w.M_Warehouse_ID = ?) "
-				+ " INNER JOIN M_Locator l ON(l.M_Warehouse_ID=w.M_Warehouse_ID and s.M_Locator_ID=l.M_Locator_ID) "
-				+ " WHERE s.M_Product_ID = ? and s.QtyOnHand > 0 "
-				+ " and s.M_AttributeSetInstance_ID <> 0 "
-				+ " ORDER BY s.Created ";
+		List<Object> parameters = new ArrayList<Object>();
+		parameters.add(Warehouse_ID);
+		parameters.add(M_Product_ID);
+		StringBuffer sql = new StringBuffer("SELECT ");
+		sql
+		.append("s.M_Product_ID , s.QtyOnHand, s.M_AttributeSetInstance_ID")
+		.append(", p.Name, masi.Description, l.Value, w.Value, w.M_Warehouse_ID,p.Value")
+		.append("  FROM M_Storage s ")
+		.append(" INNER JOIN M_Product p ON (s.M_Product_ID = p.M_Product_ID) ")
+		.append(" INNER JOIN C_UOM u ON (u.C_UOM_ID = p.C_UOM_ID) ")
+		.append(" INNER JOIN M_AttributeSetInstance masi ON (masi.M_AttributeSetInstance_ID = s.M_AttributeSetInstance_ID) ")
+		.append(" INNER JOIN M_Warehouse w ON (w.M_Warehouse_ID = ?) ")
+		.append(" INNER JOIN M_Locator l ON(l.M_Warehouse_ID=w.M_Warehouse_ID and s.M_Locator_ID=l.M_Locator_ID) ")
+		.append(" WHERE s.M_Product_ID = ? and s.QtyOnHand > 0 ");
+		
+		// Define Default Locator for Repetitive Line
+		if(getPP_Order().isRepetitiveProcess())
+		{
+			sql.append(" AND s.M_Locator_ID = ? ");
+			parameters.add(getPP_Order().getFloorStockLocatoById());
+		}
+		
+		sql.append(" AND  s.M_AttributeSetInstance_ID <> 0 ")		
+		.append(" ORDER BY s.Created ");
+				
 		// Execute
 		PreparedStatement pstmt = null;
 		ResultSet rs = null;
 		try {
-			pstmt = DB.prepareStatement(sql, null);
-			pstmt.setInt(1, Warehouse_ID);
-			pstmt.setInt(2, M_Product_ID);
+			pstmt = DB.prepareStatement(sql.toString(), null);
+			DB.setParameters(pstmt, parameters);
 			rs = pstmt.executeQuery();
 			while (rs.next()) {
 				issue.setRowCount(row + 1);
@@ -913,6 +929,14 @@ public class OrderReceiptIssue extends GenForm {
 
 	protected void setToDeliverQty(BigDecimal qty) {
 		m_toDeliverQty = qty;
+	}
+	
+	//MFG-14
+	protected String getProcessType()
+	{
+		if(m_ProcessType == null)
+			m_ProcessType = getPP_Order().getAD_Workflow().getS_Resource().getName();
+		return m_ProcessType;
 	}
 
 	public void showMessage(String message, boolean error) {
