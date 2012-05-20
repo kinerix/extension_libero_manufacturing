@@ -42,7 +42,6 @@ import org.compiere.util.Env;
  */
 public class MPPOrderBOMLine extends X_PP_Order_BOMLine
 {
-
 	
 	/**
 	 * 
@@ -198,8 +197,7 @@ public class MPPOrderBOMLine extends X_PP_Order_BOMLine
 		{	
 			setQtyRequired(Env.ZERO);
 			reserveStock();
-		}	
-		
+		}			
 		return true;
 	}
 
